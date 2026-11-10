@@ -197,6 +197,10 @@ form.pf{counter-reset:ps;gap:14px}
 .tk-code{text-align:center;font:500 18px ui-monospace,Menlo,monospace;letter-spacing:.06em;padding-bottom:10px}
 .tk-price{background:#000;color:#fff;text-align:center;padding:10px;margin:0 -16px}.tk-price small{display:block;font-size:11px}.tk-price b{font-size:20px}
 </style>
+<style id="ad-fix">
+/* বিবরণ বক্স লেখা অনুযায়ী নিজে থেকে লম্বা হয় */
+#pd{field-sizing:content;min-height:150px;max-height:none;resize:none;overflow:hidden;line-height:1.75;white-space:pre-wrap;overflow-wrap:anywhere}
+</style>
 </head>
 <body>
 <div id="splash" role="status" aria-live="polite"><div class="spl-logo"><img src="logo.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('i'),{className:'fa-solid fa-crown'}))"></div><div class="spl-t">BANA <b>FASHION</b></div><div class="spl-bar"><i></i></div><div class="spl-s">অ্যাডমিন প্যানেল লোড হচ্ছে…</div></div>
@@ -444,6 +448,22 @@ window.IBM=async()=>{if(!IBon())return toast('আগে Key সেভ করে 
  const pd={};for(const k in P){const m=P[k];if(m&&isD(m.logo))pd[k]={...m,logo:await mv(m.logo)}}if(Object.keys(pd).length)await setDoc(doc(db,'settings','payment'),pd,{merge:true});
  toast('✓ '+n+'টি ছবি ImgBB-তে গেছে'+(bad?' · '+bad+'টি ব্যর্থ':''),bad?'err':'ok')}catch(e){toast('মাইগ্রেশন থেমে গেছে: '+e.message,'err')}};
 function img(f,max=640,q=.72){if(IBon()){max=Math.min(2000,Math.round(max*2.5));q=Math.min(.92,q+.16)}return new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>{const m=new Image();m.onload=()=>{const k=Math.min(1,max/Math.max(m.width,m.height)),c=document.createElement('canvas');c.width=m.width*k;c.height=m.height*k;c.getContext('2d').drawImage(m,0,0,c.width,c.height);IBX(c.toDataURL('image/jpeg',q)).then(ok,no)};m.onerror=no;m.src=r.result};r.readAsDataURL(f)})}
+/* ===== অটো ইমেজ ফিট: ছবি যত বড়ই হোক, ডেটাবেসের ১ MB সীমার মধ্যে আপনা-আপনি ছোট হয়ে সেভ হবে ===== */
+const isDI=u=>typeof u==='string'&&u.startsWith('data:image/');
+const rezDI=(u,k,q)=>new Promise(ok=>{const m=new Image();m.onload=()=>{try{const mx=Math.max(m.width,m.height),kk=mx*k<360?1:k,c=document.createElement('canvas');c.width=Math.max(1,Math.round(m.width*kk));c.height=Math.max(1,Math.round(m.height*kk));const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(m,0,0,c.width,c.height);ok(c.toDataURL('image/jpeg',q))}catch(e){ok(u)}};m.onerror=()=>ok(u);m.src=u});
+async function retryIB(){if(!IBon())return;for(let i=0;i<IMGS.length;i++){if(isDI(IMGS[i])){const r=await IBX(IMGS[i]);IMGS[i]=r;if(isDI(r))break}}gref()}
+async function fitImgs(bulk){
+ const desc=($('pd')?.value||''),LIM=900000-desc.length*3-5000;
+ const w=u=>isDI(u)?u.length:0;
+ /* সেভের সময় cover ছবি images আর image—দুই জায়গায় যায়, তাই দুবার ধরা হয় */
+ const tot=()=>bulk?Math.max(0,...IMGS.map(u=>w(u)*2)):IMGS.reduce((n,u)=>n+w(u),0)+w(IMGS[0]);
+ if(tot()<=LIM)return true;
+ toast('ছবিগুলো আপনা-আপনি ছোট করা হচ্ছে…');
+ let q=.72;
+ for(let r=0;r<10&&tot()>LIM;r++){
+  for(let i=0;i<IMGS.length;i++){if(!isDI(IMGS[i]))continue;if(bulk&&w(IMGS[i])*2<=LIM)continue;IMGS[i]=await rezDI(IMGS[i],.85,q)}
+  q=Math.max(.42,q-.05)}
+ gref();return tot()<=LIM}
 const SG=[['অক্ষর সাইজ (শার্ট/টি-শার্ট/হুডি/জ্যাকেট)',['XS','S','M','L','XL','XXL','3XL','4XL','5XL']],['নম্বর সাইজ (প্যান্ট/জিন্স)',['26','28','30','32','34','36','38','40','42','44']],['পাঞ্জাবি/ফরমাল শার্ট',['36','38','40','42','44','46','48','50']],['অন্যান্য',['Free Size']]];
 window.SGA=(gi,on)=>{const g=SG[gi][1];SZ=on?[...SZ,...g.filter(x=>!SZ.includes(x))]:SZ.filter(x=>!g.includes(x));document.querySelectorAll('#pform .ch[data-sz]').forEach(b=>{b.classList.toggle('on',SZ.includes(b.dataset.sz))});const c=$('szcnt');if(c)c.textContent=bn(SZ.length)+'টি সাইজ বাছাই করা'};
 window.TS=(s,el)=>{SZ=SZ.includes(s)?SZ.filter(x=>x!==s):[...SZ,s];el.classList.toggle('on');const c=$('szcnt');if(c)c.textContent=bn(SZ.length)+'টি সাইজ বাছাই করা'};
@@ -453,7 +473,7 @@ window.EPr=id=>{EP=prods.find(p=>p.id===id);SZ=[...(EP.sizes||[])];IMGS=[...(EP.
 function prd(){const p=EP||{};return`${EP?'<div class="fixed inset-0 z-[90] bg-black/75 backdrop-blur-sm" onclick="T(\'prods\')"></div>':''}<form id="pform" onsubmit="return SP(event)" class="c p-4 grid gap-4 pf ${EP?'ed':''}"><div class="font-bold flex items-center gap-3"><span class="ic" style="--ic:#F59E0B;width:38px;height:38px;border-radius:12px"><i class="fa-solid ${EP?'fa-pen-to-square':'fa-circle-plus'}"></i></span><span class="min-w-0"><span class="block text-base">${EP?'প্রোডাক্ট এডিট':'নতুন প্রোডাক্ট'}</span><span class="block text-[11px] text-gray-400 font-medium">${EP?'তথ্য বদলে নিচের বাটনে আপডেট করুন':'ছবি, সাইজ ও দাম দিয়ে সাইটে প্রোডাক্ট যোগ করুন'}</span></span>${EP?'<button type="button" class="bf-x ml-auto" onclick="T(\'prods\')" aria-label="বন্ধ করুন"><i class="fa-solid fa-xmark"></i></button>':''}</div>
  <div class="psec"><div class="psec-h"><i class="fa-solid fa-tag"></i>মৌলিক তথ্য</div><div class="pgrid"><div style="grid-column:1/-1"><label class="lb">প্রোডাক্টের নাম</label><input class="i" id="pt" value="${esc(p.title)}" required placeholder="যেমন: প্রিমিয়াম কটন পোলো"></div><div><label class="lb">ক্যাটাগরি</label><select class="i" id="pc">${cats.map(c=>`<option value="${esc(c.id)}" ${p.category===c.id?'selected':''}>${esc(c.label)}</option>`).join('')||'<option value="">আগে ক্যাটাগরি বানান</option>'}</select></div><div><label class="lb">ব্যাজ (NEW, HOT)</label><input class="i" id="pb" value="${esc(p.badge)}" placeholder="ঐচ্ছিক"></div></div></div>
  <div class="psec"><div class="psec-h"><i class="fa-solid fa-bangladeshi-taka-sign"></i>দাম ও স্টক</div><div class="pgrid"><div><label class="lb">দাম (৳)</label><input class="i" id="pp" type="number" inputmode="numeric" value="${p.price||''}" required oninput="DS()"></div><div><label class="lb">আগের দাম (৳)</label><input class="i" id="po" type="number" inputmode="numeric" value="${p.oldPrice||''}" oninput="DS()" placeholder="ঐচ্ছিক"></div><div><label class="lb">স্টক (পিস)</label><input class="i" id="pk" type="number" inputmode="numeric" min="0" value="${p.stock??''}" placeholder="যেমন 25"></div></div><div class="text-xs mt-2" id="dsc"></div></div>
- <div class="psec"><div class="psec-h"><i class="fa-solid fa-images"></i>প্রোডাক্টের ছবি<span class="ml-auto text-[11px] font-bold text-amber-400" id="pcnt2">${bn(IMGS.length)}/${bn(PMAX())}</span></div><label ondragover="event.preventDefault()" ondrop="event.preventDefault();PF({files:event.dataTransfer.files,value:''})" class="pdrop"><i class="fa-solid fa-cloud-arrow-up text-2xl"></i><span class="font-bold text-sm">ছবি বাছাই করুন বা এখানে ড্রপ করুন</span><span class="text-[11px] text-gray-400 font-medium">একসাথে যতগুলো ইচ্ছা বাছাই করুন (সর্বোচ্চ ${bn(PMAX())}টি) · প্রথমটা কভার ছবি</span><input id="pf" type="file" accept="image/*" multiple class="hidden" onchange="PF(this)"></label><div id="pup" class="text-[11px] text-amber-300 mt-2 min-h-[14px]"></div><div id="pgal" class="pg mt-2">${gal()}</div><div class="text-[10.5px] text-amber-300/90 mt-2 leading-relaxed"><i class="fa-solid fa-palette mr-1"></i>কালার দিয়ে থাকলে প্রতিটা ছবির নিচের বক্সে সেই ছবির কালার বেছে দিন — কাস্টমার ওই কালারে ক্লিক করলে শুধু ওই কালারের ছবি দেখবে এবং সেই কালারের ছবিই অর্ডারে যাবে।</div>${IBon()?'':'<div class="text-[10px] text-gray-500 mt-2 leading-relaxed"><i class="fa-solid fa-circle-info mr-1"></i>ImgBB Key দিলে (সেটিংস) ছবির সীমা ২০টি পর্যন্ত বাড়ে, নইলে ৬টি।</div>'}${EP?'':'<label class="text-xs mt-3 flex items-center gap-2 p-3 rounded-xl bg-black/25"><input type="checkbox" id="pbulk"> প্রতিটা ছবি আলাদা প্রোডাক্ট হিসেবে আপলোড হবে (একই দাম, সাইজ ও ক্যাটাগরি)</label>'}</div>
+ <div class="psec"><div class="psec-h"><i class="fa-solid fa-images"></i>প্রোডাক্টের ছবি<span class="ml-auto text-[11px] font-bold text-amber-400" id="pcnt2">${bn(IMGS.length)}/${bn(PMAX())}</span></div><label ondragover="event.preventDefault()" ondrop="event.preventDefault();PF({files:event.dataTransfer.files,value:''})" class="pdrop"><i class="fa-solid fa-cloud-arrow-up text-2xl"></i><span class="font-bold text-sm">ছবি বাছাই করুন বা এখানে ড্রপ করুন</span><span class="text-[11px] text-gray-400 font-medium">একসাথে যতগুলো ইচ্ছা বাছাই করুন (সর্বোচ্চ ${bn(PMAX())}টি) · প্রথমটা কভার ছবি</span><input id="pf" type="file" accept="image/*" multiple class="hidden" onchange="PF(this)"></label><div id="pup" class="text-[11px] text-amber-300 mt-2 min-h-[14px]"></div><div id="pgal" class="pg mt-2">${gal()}</div><div class="text-[10.5px] text-amber-300/90 mt-2 leading-relaxed"><i class="fa-solid fa-palette mr-1"></i>কালার দিয়ে থাকলে প্রতিটা ছবির নিচের বক্সে সেই ছবির কালার বেছে দিন — কাস্টমার ওই কালারে ক্লিক করলে শুধু ওই কালারের ছবি দেখবে এবং সেই কালারের ছবিই অর্ডারে যাবে।</div>${IBon()?'':'<div class="text-[10px] text-gray-500 mt-2 leading-relaxed"><i class="fa-solid fa-circle-info mr-1"></i>ImgBB Key দিলে (সেটিংস) ছবির সীমা ২০টি পর্যন্ত বাড়ে, নইলে ৬টি। বড় ছবি সেভের সময় আপনা-আপনি ছোট হয়ে যায়।</div>'}${EP?'':'<label class="text-xs mt-3 flex items-center gap-2 p-3 rounded-xl bg-black/25"><input type="checkbox" id="pbulk"> প্রতিটা ছবি আলাদা প্রোডাক্ট হিসেবে আপলোড হবে (একই দাম, সাইজ ও ক্যাটাগরি)</label>'}</div>
  <div class="psec"><div class="psec-h"><i class="fa-solid fa-ruler-combined"></i>সাইজ<span class="ml-auto text-[11px] font-bold text-amber-400" id="szcnt">${bn(SZ.length)}টি সাইজ বাছাই করা</span></div>${SG.map(([n,a],gi)=>`<div class="mb-3"><div class="flex items-center justify-between mb-1.5"><div class="text-[11px] text-gray-400 font-bold">${n}</div><span class="flex gap-1"><button type="button" class="szq" onclick="SGA(${gi},true)">সব</button><button type="button" class="szq" onclick="SGA(${gi},false)">মুছুন</button></span></div><div class="flex flex-wrap gap-2">${a.map(chip).join('')}</div></div>`).join('')}
  ${SZ.filter(s=>!SG.some(g=>g[1].includes(s))).length?`<div class="flex flex-wrap gap-2 mb-2">${SZ.filter(s=>!SG.some(g=>g[1].includes(s))).map(chip).join('')}</div>`:''}<div class="flex gap-2 max-w-xs"><input id="cs" class="i" placeholder="অন্য সাইজ লিখুন (যেমন 6XL)"><button type="button" class="g" onclick="AS()">যোগ</button></div></div>
  <div class="psec"><div class="psec-h"><i class="fa-solid fa-palette"></i>কালার</div><label class="lb">কমা দিয়ে লিখুন বা নিচ থেকে ট্যাপ করুন</label><input class="i" id="pcl" onchange="gref()" value="${esc((p.colors||[]).join(', '))}" placeholder="Black, White, Navy"><div class="flex flex-wrap gap-1.5 mt-2">${CLR.map(([n,h])=>`<button type="button" class="sw" title="${n}" style="background:${h}" onclick="AddC('${n}')"></button>`).join('')}</div></div>
@@ -477,7 +497,7 @@ window.CIA=()=>{if(confirm('সব ছবি সরিয়ে ফেলবে�
 window.SP0=async e=>{e.preventDefault();if(IBn>0){toast('ছবি আপলোড শেষ হওয়া পর্যন্ত একটু অপেক্ষা করুন','err');return 0}const d={title:$('pt').value.trim(),category:$('pc').value,badge:$('pb').value.trim()||null,price:+$('pp').value,oldPrice:+$('po').value||null,description:$('pd').value.trim(),sizes:SZ,eid:$('peid').checked,home:$('phome').checked};const cc=CL($('pcl').value);if(cc.length||EP?.colors)d.colors=cc;if($('pk').value!=='')d.stock=+$('pk').value;
  if(!IMGS.length){alert('কমপক্ষে একটি ছবি দিন');return 0}
  if(cc.length>1&&IMGS.length>1&&!IMGC.some(c=>cc.includes(c))&&!confirm('আপনি একাধিক কালার দিয়েছেন কিন্তু কোনো ছবির কালার বাছেননি।\nকালার বাছা না থাকলে কাস্টমার কালার বদলালে ছবি বদলাবে না।\n\nতবুও সেভ করবেন?'))return 0
- if(IMGS.reduce((n,u)=>n+String(u).length,0)>900000){alert('ছবিগুলোর মোট সাইজ অনেক বড় (১ MB সীমা)। কয়েকটি ছবি কমান, অথবা সেটিংসে ImgBB Key দিয়ে লিংক-মোডে আপলোড করুন।');return 0}
+ {const bulk=!EP&&IMGS.length>1&&!!$('pbulk')?.checked;await retryIB();if(!(await fitImgs(bulk))){alert('ছবিগুলো ছোট করেও ১ MB-এর মধ্যে আনা যায়নি। কয়েকটি ছবি কমান, অথবা সেটিংসে ImgBB Key দিয়ে লিংক-মোডে আপলোড করুন।');return 0}}
  if(!EP&&IMGS.length>1&&$('pbulk')?.checked){const b=writeBatch(db);IMGS.forEach((u,n)=>b.set(doc(collection(db,'products')),{...d,title:d.title+' '+(n+1),image:u,images:[u],pno:PNX()+n,rating:4.8,reviews:0,createdAt:serverTimestamp()}));await b.commit()}
  else{d.images=IMGS;d.image=IMGS[0];sy();{const m=IMGC.map(c=>cc.includes(c)?c:'');d.imgColors=m.some(Boolean)?m:[]}if(EP)await updateDoc(doc(db,'products',EP.id),d);else await addDoc(collection(db,'products'),{...d,pno:PNX(),rating:4.8,reviews:0,createdAt:serverTimestamp()})}
  EP=null;SZ=[];IMGS=[];IMGC=[];draw(true);return 1};
@@ -497,7 +517,7 @@ window.SB=async e=>{e.preventDefault();const bt=e.submitter,h=bt&&bt.innerHTML,f
  if(!f){toast('ত্রুটি: ব্যানারের ছবি দিন','err');return false}
  if(tx&&!title){toast('ত্রুটি: হেডলাইন লিখুন, অথবা "লেখা দেখান" বন্ধ করুন','err');return false}
  if(bt){bt.disabled=true;bt.innerHTML='<i class="fa-solid fa-spinner fa-spin mr-2"></i>আপলোড হচ্ছে...'}
- try{let u=await img(f,1600,.72);if(!IBon()&&u.length>800000)u=await img(f,1200,.6);if(!IBon()&&u.length>930000)throw new Error('ছবির সাইজ অনেক বড় — ছোট ছবি দিন বা সেটিংসে ImgBB Key দিন');
+ try{let u=await img(f,1600,.72);if(!IBon()&&u.length>800000)u=await img(f,1200,.6);if(!IBon()&&u.length>800000)u=await img(f,900,.5);if(!IBon()&&u.length>930000)throw new Error('ছবির সাইজ অনেক বড় — ছোট ছবি দিন বা সেটিংসে ImgBB Key দিন');
   const o=banners.length?Math.min(...banners.map(b=>+b.order||0))-1:0;
   await addDoc(collection(db,'banners'),{title,sub:$('bs').value.trim(),cta:$('bc').value.trim()||'SHOP NOW',cat:$('bk').value,showText:tx,active:true,image:u,order:o,createdAt:serverTimestamp()});
   toast('ব্যানার আপলোড হয়েছে — সাইটে দেখা যাবে');draw(true)}
@@ -513,7 +533,7 @@ window.BE=id=>{const b=banners.find(x=>x.id===id);if(!b)return;let nu=null;const
  <label class="text-xs flex items-center gap-2"><input type="checkbox" id="et5" ${b.showText!==false?'checked':''}> ছবির উপর লেখা ও বাটন দেখান</label></div>
  <div class="flex justify-end gap-2 mt-5"><button class="g" id="ec2">বাতিল</button><button class="b" id="eu2"><i class="fa-solid fa-floppy-disk mr-1"></i>আপডেট করুন</button></div></div>`;
  document.body.appendChild(m);const q=x=>m.querySelector(x),cl=()=>m.remove();q('#bx2').onclick=q('#ec2').onclick=cl;m.onclick=e=>{if(e.target===m)cl()};
- q('#bfi').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{nu=await img(f,1600,.72);if(!IBon()&&nu.length>800000)nu=await img(f,1200,.6);q('#bpv').src=nu}catch(x){toast('ত্রুটি: ছবি পড়া যায়নি','err')}};
+ q('#bfi').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{nu=await img(f,1600,.72);if(!IBon()&&nu.length>800000)nu=await img(f,1200,.6);if(!IBon()&&nu.length>800000)nu=await img(f,900,.5);q('#bpv').src=nu}catch(x){toast('ত্রুটি: ছবি পড়া যায়নি','err')}};
  q('#eu2').onclick=async()=>{const tx=q('#et5').checked,t=q('#et1').value.trim();if(tx&&!t){toast('ত্রুটি: হেডলাইন লিখুন','err');return}
   if(nu&&!IBon()&&nu.length>930000){toast('ত্রুটি: ছবির সাইজ অনেক বড়','err');return}
   try{await updateDoc(doc(db,'banners',id),{title:t,sub:q('#et2').value.trim(),cta:q('#et3').value.trim()||'SHOP NOW',cat:q('#et4').value,showText:tx,...(nu?{image:nu}:{})});cl();toast('ব্যানার আপডেট হয়েছে')}catch(e){toast('ত্রুটি: '+(e.code||e.message),'err')}}};
@@ -794,6 +814,14 @@ window.CE=id=>{const c=cats.find(x=>x.id===id);if(!c)return;let nu=null;const m=
   function sync(){ if(any()) lock(); else unlock(); }
   new MutationObserver(sync).observe(document.body,{childList:true});
   document.addEventListener('keydown',function(e){ if(e.key!=='Escape') return; var w=document.getElementById('invWrap'); if(w){ w.remove(); e.stopImmediatePropagation(); } });
+})();
+</script>
+<script id="ad-autogrow">
+/* field-sizing না থাকা ব্রাউজারের জন্য: বিবরণ বক্স লেখার সাথে লম্বা হয় */
+(function(){var native=!!(window.CSS&&CSS.supports&&CSS.supports('field-sizing','content'));
+function ag(el){if(!el||native)return;el.style.height='auto';el.style.height=Math.max(el.scrollHeight+2,150)+'px'}
+document.addEventListener('input',function(e){if(e.target&&e.target.id==='pd')ag(e.target)},true);
+new MutationObserver(function(){var t=document.getElementById('pd');if(t&&!t.getAttribute('data-ag')){t.setAttribute('data-ag','1');ag(t)}}).observe(document.body,{childList:true,subtree:true});
 })();
 </script>
 </body></html>
