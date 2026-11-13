@@ -232,7 +232,7 @@ const app=initializeApp(cfg);
   if (APPCHECK_SITE_KEY) { try { window.__appCheck = initializeAppCheck(app, { provider: new ReCaptchaV3Provider(APPCHECK_SITE_KEY), isTokenAutoRefreshEnabled: true }); window.__getAppCheckToken = getAppCheckToken; } catch (e) { console.warn('AppCheck:', e); } }
 const db=getFirestore(app),au=getAuth(app);
 let OF='all',orders=[],prods=[],cats=[],banners=[],visits=[],stats=[],tot={},S={},P={},tab='dash',ucount=0,unsub=[],EP=null,EB=null,SZ=[],IMGS=[],IMGC=[],C={},promos=[],reviews=[],T={},WPV={},SMP={},SMV={},IB={};
-const NAV=[['dash','fa-chart-pie','ড্যাশবোর্ড'],['orders','fa-bag-shopping','অর্ডার'],['trx','fa-receipt','TrxID পেমেন্ট'],['risk','fa-user-shield','কাস্টমার চেক'],['promo','fa-ticket','প্রোমোকোড'],['prods','fa-shirt','প্রোডাক্ট'],['cats','fa-layer-group','ক্যাটাগরি'],['ban','fa-image','ব্যানার'],['rev','fa-star','রিভিউ'],['vis','fa-eye','ভিজিট'],['pay','fa-wallet','পেমেন্ট'],['set','fa-gear','সেটিংস']];
+const NAV=[['dash','fa-chart-pie','ড্যাশবোর্ড'],['orders','fa-bag-shopping','অর্ডার'],['trx','fa-receipt','TrxID পেমেন্ট'],['risk','fa-user-shield','কাস্টমার চেক'],['promo','fa-ticket','প্রোমোকোড'],['prods','fa-shirt','প্রোডাক্ট'],['hang','fa-list-ol','হ্যাঙ্গার'],['cats','fa-layer-group','ক্যাটাগরি'],['ban','fa-image','ব্যানার'],['rev','fa-star','রিভিউ'],['vis','fa-eye','ভিজিট'],['pay','fa-wallet','পেমেন্ট'],['set','fa-gear','সেটিংস']];
 const day=(d=new Date())=>d.toLocaleDateString('en-CA',{timeZone:'Asia/Dhaka'}),ts=o=>o.createdAt?.toDate?o.createdAt.toDate():new Date(o.createdAt||0),bn=n=>String(n).replace(/\d/g,d=>'০১২৩৪৫৬৭৮৯'[d]);
 window.L=async e=>{e.preventDefault();try{await signInWithEmailAndPassword(au,$('em').value.trim(),$('pw').value)}catch(x){$('le').textContent='ইমেইল বা পাসওয়ার্ড ভুল'}return false};
 window.LO=()=>signOut(au);
@@ -254,13 +254,64 @@ async function boot(){const ym=day().slice(0,7);
  unsub.push(onSnapshot(doc(db,'stats','total'),s=>{tot=s.data()||{};dr('total')}));
  unsub.push(onSnapshot(doc(db,'settings','site'),s=>{S=s.data()||{};window.SHOPX={...(S.shopAddress?{addr:S.shopAddress}:{}),...(S.helpline?{phone:S.helpline}:{})};dr('site')}));
  unsub.push(onSnapshot(doc(db,'private','courier'),s=>{C=s.data()||{};dr('courier')},()=>{}));
+ unsub.push(onSnapshot(doc(db,'settings','hanger'),s=>{HANG=s.data()||{ids:[]};dr('hanger')},()=>{}));
  unsub.push(onSnapshot(doc(db,'settings','payment'),s=>{P=s.data()||{};dr('payment')}));
  unsub.push(onSnapshot(doc(db,'private','whatsapp'),s=>{WPV=s.data()||{};dr('whatsapp')},()=>{}));
   unsub.push(onSnapshot(doc(db,'settings','sms'),s=>{SMP=s.data()||{};dr('sms')},()=>{}));
   unsub.push(onSnapshot(doc(db,'private','sms'),s=>{SMV=s.data()||{};dr('smsv')},()=>{}));
  unsub.push(onSnapshot(doc(db,'private','cloudinary'),s=>{IB=s.data()||{};dr('imgbb')},()=>{}));
  try{ucount=(await getCountFromServer(collection(db,'users'))).data().count;dr('users')}catch(e){}}
-const VIEWS={trx:()=>trxV(),promo,risk,dash,orders:ord,prods:prd,cats:cat,ban,rev,vis,pay,set:stg};
+/* ===== হ্যাঙ্গার রেল: হোম পেজে হ্যাঙ্গারে যে প্রোডাক্টগুলো ঝুলবে — settings/hanger.ids (সাইটে এই ক্রমেই দেখাবে) ===== */
+let HANG={ids:[],topIds:[]};
+const HG_MAX=12, HG_TOP_MAX=6;
+const hE=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hgImg=p=>(p.images&&p.images[0])||p.image||'';
+/* w = 'top' (উপরের সারি, settings/hanger.topIds) or 'bot' (নিচের সারি, settings/hanger.ids) */
+const hgKey=w=>w==='top'?'topIds':'ids';
+const hgMax=w=>w==='top'?HG_TOP_MAX:HG_MAX;
+function hgCards(q,w){
+  const s=String(q||'').trim().toLowerCase(), ids=HANG[hgKey(w)]||[];
+  const rest=prods.filter(p=>!ids.includes(p.id)&&(!s||String(p.title||'').toLowerCase().includes(s))).slice(0,60);
+  return rest.map(p=>`<button type="button" class="text-left rounded-xl overflow-hidden bg-black/30 border border-white/10 hover:border-amber-400 disabled:opacity-40" onclick="HGAdd('${hE(p.id)}','${w}')" ${ids.length>=hgMax(w)?'disabled':''}><img src="${hE(hgImg(p))}" class="w-full aspect-[4/5] object-cover" loading="lazy"><div class="p-2 text-xs font-bold truncate">${hE(p.title)}</div></button>`).join('');
+}
+function hangPanel(w,title,hint){
+  const ids=HANG[hgKey(w)]||[], max=hgMax(w);
+  const sel=ids.map(id=>prods.find(p=>p.id===id)).filter(Boolean);
+  const btn='px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs disabled:opacity-30';
+  return `<div class="space-y-3 p-3 rounded-xl border border-white/10">
+    <div class="font-bold"><i class="fa-solid ${w==='top'?'fa-rotate':'fa-list-ol'} text-amber-400 mr-2"></i>${title}</div>
+    <p class="text-xs text-gray-400">${hint} সর্বোচ্চ ${max}টি। যে ক্রমে যোগ করবেন, সাইটে সেই ক্রমে দেখাবে।</p>
+    <div class="text-xs font-bold text-amber-400">এখন আছে (${sel.length}/${max})</div>
+    <div class="grid gap-2">${sel.length?sel.map((p,i)=>`<div class="flex items-center gap-3 p-2 rounded-xl bg-black/30 border border-white/10">
+        <img src="${hE(hgImg(p))}" class="w-12 h-12 rounded-lg object-cover" loading="lazy">
+        <div class="min-w-0 flex-1"><div class="text-sm font-bold truncate">${hE(p.title)}</div><div class="text-xs text-amber-400">Tk ${hE(p.price)}</div></div>
+        <button type="button" class="${btn}" onclick="HGMove('${hE(p.id)}',-1,'${w}')" ${i===0?'disabled':''} title="আগে নিন"><i class="fa-solid fa-arrow-up"></i></button>
+        <button type="button" class="${btn}" onclick="HGMove('${hE(p.id)}',1,'${w}')" ${i===sel.length-1?'disabled':''} title="পরে নিন"><i class="fa-solid fa-arrow-down"></i></button>
+        <button type="button" class="${btn}" onclick="HGDel('${hE(p.id)}','${w}')" title="সরান"><i class="fa-solid fa-xmark"></i></button>
+      </div>`).join(''):'<div class="text-xs text-gray-500">এখনো কোনো প্রোডাক্ট যোগ করা হয়নি</div>'}</div>
+    <div class="text-xs font-bold">বাকি প্রোডাক্ট — যোগ করতে ক্লিক করুন</div>
+    <input id="hgq${w}" class="i" placeholder="প্রোডাক্ট খুঁজুন..." oninput="HGList(this.value,'${w}')">
+    <div id="hgList${w}" class="grid grid-cols-2 sm:grid-cols-4 gap-2">${hgCards('',w)}</div>
+  </div>`;
+}
+function hangV(){
+  return `<div class="c p-4 space-y-5">
+    <div class="font-bold"><i class="fa-solid fa-list-ol text-amber-400 mr-2"></i>হ্যাঙ্গার — হোম পেজের দুই জায়গার প্রোডাক্ট</div>
+    <p class="text-xs text-gray-400">উপরের সারি: স্পিন রেল। নিচের সারি: হ্যাঙ্গারে ঝোলানো গ্রিড (ফোনে ২টি করে)। উপরের সারিতে কোনো প্রোডাক্ট না বাছলে আগের ডিফল্ট রেল দেখাবে।</p>
+    ${hangPanel('top','উপরের সারি — এই জায়গায় যাবে','স্পিন রেলে দেখাবে।')}
+    ${hangPanel('bot','নিচের সারি — তার নিচে যাবে','হ্যাঙ্গারে ঝুলবে।')}
+  </div>`;
+}
+window.HGList=(q,w)=>{ const el=document.getElementById('hgList'+w); if(el) el.innerHTML=hgCards(q,w); };
+async function hgSave(w,ids){
+  const key=hgKey(w); HANG[key]=ids; draw(true);
+  try{ await setDoc(doc(db,'settings','hanger'),{[key]:ids,updatedAt:serverTimestamp()},{merge:true}); toast('হ্যাঙ্গার আপডেট হয়েছে'); }
+  catch(e){ toast('ত্রুটি: '+e.message,'err'); }
+}
+window.HGAdd=(id,w)=>{ const ids=(HANG[hgKey(w)]||[]).filter(x=>x!==id); if(ids.length>=hgMax(w)){ toast('সর্বোচ্চ '+hgMax(w)+'টি প্রোডাক্ট','err'); return; } hgSave(w,[...ids,id]); };
+window.HGDel=(id,w)=>hgSave(w,(HANG[hgKey(w)]||[]).filter(x=>x!==id));
+window.HGMove=(id,d,w)=>{ const a=[...(HANG[hgKey(w)]||[])], i=a.indexOf(id), j=i+d; if(i<0||j<0||j>=a.length) return; [a[i],a[j]]=[a[j],a[i]]; hgSave(w,a); };
+const VIEWS={trx:()=>trxV(),promo,risk,dash,orders:ord,prods:prd,cats:cat,ban,rev,vis,pay,set:stg,hang:hangV};
 let _dq=0,ANIM=1,_ns='',OSM=false;const OSEL=new Set();
 function navDraw(){const pc=orders.filter(o=>o.status==='pending').length,sg=tab+'|'+pc;if(sg===_ns)return;_ns=sg;const _s=$('bn').scrollLeft,_t=$('nav').scrollTop;
  $('nav').innerHTML=NAV.map(([k,i,l])=>`<button class="nv ${tab===k?'on':''}" onclick="T('${k}')"><span class="ic" style="--ic:${NC[k]}"><i class="fa-solid ${i}"></i></span>${l}${k==='orders'&&pc?`<span class="ml-auto bg-red-500 text-white text-[10px] px-2 rounded-full">${pc}</span>`:''}</button>`).join('');
@@ -268,10 +319,10 @@ function navDraw(){const pc=orders.filter(o=>o.status==='pending').length,sg=tab
  $('bn').scrollLeft=_s;$('nav').scrollTop=_t}
 window.__sd={};document.addEventListener('input',e=>{const t=e.target;if(tab==='set'&&t&&t.id&&t.closest&&t.closest('#v'))window.__sd[t.id]=t.type==='checkbox'?{c:t.checked}:{v:t.value}},true);document.addEventListener('change',e=>{const t=e.target;if(tab==='set'&&t&&t.id&&t.closest&&t.closest('#v'))window.__sd[t.id]=t.type==='checkbox'?{c:t.checked}:{v:t.value}},true);
 window.SDC=ids=>ids.forEach(i=>delete window.__sd[i]);
-function drawNow(force){const a=document.activeElement;navDraw();if(!force&&a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&['prods','cats','ban','pay','set','promo','risk','rail'].includes(tab))return;
+function drawNow(force){const a=document.activeElement;navDraw();if(!force&&a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)&&['prods','cats','ban','pay','set','promo','risk','rail','hang'].includes(tab))return;
  $('ttl').textContent=NAV.find(x=>x[0]===tab)[2];const v=$('v');v.classList.toggle('anim',!!ANIM);ANIM=0;v.innerHTML=VIEWS[tab]();if(tab==='set'){try{Object.entries(window.__sd).forEach(([id,o])=>{const el=document.getElementById(id);if(!el)return;if('c' in o)el.checked=o.c;else el.value=o.v})}catch(e){}}window.ODR&&window.ODR()}
 function draw(force){if(force===true){if(_dq){cancelAnimationFrame(_dq);_dq=0}drawNow(true);return}if(_dq)return;_dq=requestAnimationFrame(()=>{_dq=0;drawNow()})}
-const REL={dash:['orders','products','categories','banners','stats','total','users','visits'],orders:['orders','products'],trx:['orders'],risk:['orders','products'],promo:['promos','orders'],prods:['products','categories'],cats:['categories','products'],ban:['banners','categories'],rev:['reviews','products'],vis:['visits','stats','total'],pay:['payment','site'],set:['site','courier','whatsapp','sms','smsv','imgbb','payment']};
+const REL={dash:['orders','products','categories','banners','stats','total','users','visits'],orders:['orders','products'],trx:['orders'],risk:['orders','products'],promo:['promos','orders'],prods:['products','categories'],hang:['products','hanger'],cats:['categories','products'],ban:['banners','categories'],rev:['reviews','products'],vis:['visits','stats','total'],pay:['payment','site'],set:['site','courier','whatsapp','sms','smsv','imgbb','payment']};
 const dr=src=>{const r=REL[tab];if(!r||r.includes(src))draw();else navDraw()};
 window.T=k=>{window.__sd={};tab=k;EP=EB=null;SZ=[];IMGS=[];IMGC=[];OSM=false;OSEL.clear();ANIM=1;draw(true);scrollTo({top:0,behavior:'instant'})};
 const TVd=st=>Math.max((st&&st.visitors)||0,visits.length),TV=()=>Math.max(tot.visitors||0,stats.reduce((a,x)=>a+(x.visitors||0),0));
@@ -783,7 +834,7 @@ const toast=(m,k='ok')=>{let w=$('tw');if(!w){w=document.createElement('div');w.
 window.alert=m=>toast(m,/^ত্রুটি|ব্লক|আগে|নেই|কমপক্ষে/.test(m)?'err':'ok');
 window.SM=()=>{MUTE=!MUTE;try{localStorage.setItem('bfm',MUTE?'1':'0')}catch(e){}draw(true);toast(MUTE?'সাউন্ড বন্ধ':'সাউন্ড চালু');if(!MUTE)SND.ok()};
 let PI=null;const NO=n=>{if(PI&&n.some(o=>o.status==='pending'&&!PI.has(o._id))){SND.order();toast('নতুন অর্ডার এসেছে!','bell')}PI=new Set(n.map(o=>o._id))};
-const NC={dash:'#F59E0B',orders:'#3b82f6',risk:'#ef4444',promo:'#ec4899',prods:'#8b5cf6',cats:'#06b6d4',ban:'#f97316',rev:'#eab308',vis:'#10b981',pay:'#E2136E',trx:'#E2136E',set:'#64748b'};
+const NC={dash:'#F59E0B',orders:'#3b82f6',risk:'#ef4444',promo:'#ec4899',prods:'#8b5cf6',hang:'#14b8a6',cats:'#06b6d4',ban:'#f97316',rev:'#eab308',vis:'#10b981',pay:'#E2136E',trx:'#E2136E',set:'#64748b'};
 const PIPE=[['pending','fa-hourglass-half'],['confirmed','fa-circle-check'],['shipped','fa-truck-fast'],['delivered','fa-box-open'],['cancelled','fa-ban'],['returned','fa-rotate-left']];
 function dash(){const td=day(),oT=orders.filter(o=>day(ts(o))===td&&o.status!=='cancelled'),pe=orders.filter(o=>o.status==='pending').length,low=prods.filter(p=>p.stock!=null&&p.stock<=5),units=prods.reduce((a,p)=>a+(+p.stock||0),0),
  Q=[['prods','fa-cloud-arrow-up','আপলোড'],['orders','fa-bag-shopping','অর্ডার',pe],['shipped','fa-truck-fast','ডেলিভারি'],['risk','fa-user-shield','কাস্টমার চেক']];
