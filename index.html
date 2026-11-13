@@ -507,6 +507,130 @@ window.IBM=async()=>{if(!IBon())return toast('আগে Cloudinary সেটি�
  for(const b of banners){if(isD(b.image)){const r=await mv(b.image);if(!isD(r))await updateDoc(doc(db,'banners',b.id),{image:r})}}
  const pd={};for(const k in P){const m=P[k];if(m&&isD(m.logo)){const r=await mv(m.logo);if(!isD(r))pd[k]={...m,logo:r}}}if(Object.keys(pd).length)await setDoc(doc(db,'settings','payment'),pd,{merge:true});
  toast('✓ '+n+'টি ছবি Cloudinary-তে গেছে'+(bad?' · '+bad+'টি ব্যর্থ (ডেটা অক্ষত)':''),bad?'err':'ok')}catch(e){toast('মাইগ্রেশন থেমে গেছে: '+e.message,'err')}};
+/* ===== Firebase → Cloudinary মাইগ্রেশন (অরিজিনাল HD) + ZIP ব্যাকআপ + ZIP থেকে রিকভারি =====
+   • মাইগ্রেশনে ছবি রি-কমপ্রেস হয় না — Firebase-এর অরিজিনাল ফাইলই Cloudinary-তে যায় (ডেলিভারিতে f_auto,q_auto)
+   • প্রতিটি পার্টের ZIP তৈরি ও ডাউনলোড হওয়ার পরেই কেবল ডেটাবেসের লিংক বদলায় — ব্যাকআপ ছাড়া কিছু বদলায় না
+   • ZIP-এ images/ + manifest.json + database.json + README.txt; Cloudinary সাসপেন্ড হলে নতুন আইডিতে রিকভারি করা যায় */
+let MGbusy=false,MGstop=false;const MGw=new Map();
+const MGPART=80*1048576;
+const MGurl=u=>typeof u==='string'&&(/^data:image\//.test(u)||/^https?:\/\//i.test(u));
+const MGcl=u=>/res\.cloudinary\.com\//.test(u||'');
+const MGsafe=s=>String(s==null?'':s).replace(/[^\w-]/g,'_').slice(0,40)||'x';
+const MGhs=s=>{let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0}return s.length+'-'+h.toString(36)};
+const MGorig=u=>String(u).replace(/\/upload\/f_auto,q_auto(?:,[^\/]*)?\//,'/upload/');
+const MGext=t=>({'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif','image/avif':'avif','image/bmp':'bmp','image/tiff':'tif'}[t]||'jpg');
+window.MGX=b=>{MGstop=true;if(b){b.disabled=true;b.textContent='থামানো হচ্ছে…'}};
+/* সব ছবির তালিকা: all=false → শুধু যেগুলো এখনো Cloudinary-তে নেই; all=true → সবগুলো */
+function MGscan(all){const out=[];const add=(kind,id,field,url,label)=>{if(!MGurl(url))return;if(!all&&MGcl(url))return;out.push({kind,id,field,url,label:String(label||id)})};
+ prods.forEach(p=>{const im=(p.images&&p.images.length)?p.images:(p.image?[p.image]:[]);const nm=p.title||p.name||p.id;im.forEach((u,i)=>add('product',p.id,'images',u,nm+' #'+(i+1)));if(p.image&&!im.includes(p.image))add('product',p.id,'image',p.image,nm+' (কভার)')});
+ cats.forEach(c=>add('category',c.id,'image',c.image,'ক্যাটাগরি: '+(c.title||c.name||c.id)));
+ banners.forEach(b=>add('banner',b.id,'image',b.image,'ব্যানার: '+(b.title||b.id)));
+ for(const k in P){const m=P[k];if(m&&typeof m==='object')add('payment',k,'logo',m.logo,'পেমেন্ট লোগো: '+k)}
+ return out}
+function MGlib(){return window.JSZip?Promise.resolve():new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';s.onload=ok;s.onerror=()=>no(new Error('ZIP লাইব্রেরি লোড হয়নি — ইন্টারনেট দেখুন'));document.head.appendChild(s)})}
+async function MGtype(b){const t=(b.type||'').toLowerCase().replace('image/jpg','image/jpeg');if(/^image\/(jpeg|png|webp|gif|avif|bmp|tiff)$/.test(t))return t;
+ try{const a=new Uint8Array(await b.slice(0,12).arrayBuffer());if(a[0]===255&&a[1]===216)return'image/jpeg';if(a[0]===137&&a[1]===80)return'image/png';if(a[0]===71&&a[1]===73)return'image/gif';if(a[0]===82&&a[1]===73&&a[8]===87)return'image/webp'}catch(e){}return'image/jpeg'}
+async function MGget(u){const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),90000);
+ try{const r=await fetch(u,{signal:ctl.signal,cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);const b=await r.blob();if(!b.size)throw new Error('খালি ফাইল');const t=await MGtype(b);return b.type===t?b:new Blob([b],{type:t})}
+ catch(e){throw e.name==='AbortError'?new Error('সময় শেষ (ইন্টারনেট স্লো)'):e}finally{clearTimeout(tm)}}
+/* অরিজিনাল ফাইল (Blob) বা লিংক Cloudinary-তে আপলোড; কোনো রিসাইজ/রি-কমপ্রেস নেই */
+async function MGup(src,cfg,name){for(let a=0;;a++){const fd=new FormData();
+ if(typeof src==='string')fd.append('file',src);else fd.append('file',src,name.split('/').pop()+'.'+MGext(src.type));
+ fd.append('upload_preset',cfg.preset);fd.append('public_id',name);fd.append('tags','bana,migrated');
+ const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),180000);
+ try{const r=await fetch('https://api.cloudinary.com/v1_1/'+encodeURIComponent(cfg.cloud)+'/image/upload',{method:'POST',body:fd,signal:ctl.signal});const j=await r.json().catch(()=>({}));
+  if(!r.ok||!j.secure_url){const e=new Error(j.error?.message||('HTTP '+r.status));e.status=r.status;throw e}return j}
+ catch(e){const x=e.name==='AbortError'?new Error('সময় শেষ (ইন্টারনেট স্লো)'):e;if(a>=2||[400,401,403,404,413].includes(e.status))throw x;await new Promise(r=>setTimeout(r,1200*(a+1)))}
+ finally{clearTimeout(tm)}}}
+function MGdl(b,n){const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=n;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},4000)}
+/* ---- প্রগ্রেস বক্স (বডিতে ফিক্সড; সেটিংস পেজ রি-ড্র হলেও মুছে যায় না) ---- */
+function MGbox(title){let e=$('mgBox');if(e)e.remove();e=document.createElement('div');e.id='mgBox';e.style.cssText='position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.88);display:flex;align-items:center;justify-content:center;padding:16px';
+ e.innerHTML='<div style="width:100%;max-width:520px;background:#171717;border:1px solid rgba(245,158,11,.45);border-radius:18px;padding:16px;color:#e5e5e5"><div style="font-weight:800;font-size:15px;color:#FBBF24;margin-bottom:10px"><i class="fa-solid fa-cloud-arrow-up mr-2"></i>'+title+'</div><div style="height:10px;background:#262626;border-radius:9px;overflow:hidden"><div id="mgBar" style="height:100%;width:0;background:linear-gradient(90deg,#f59e0b,#fbbf24);transition:width .3s"></div></div><div id="mgTxt" style="font-size:12px;margin:8px 0;font-weight:700">শুরু হচ্ছে…</div><div id="mgLog" style="height:160px;overflow:auto;font-size:11px;line-height:1.6;background:#0a0a0a;border-radius:10px;padding:8px;color:#a3a3a3"></div><div style="display:flex;gap:8px;margin-top:10px"><button id="mgStop" type="button" class="g" style="flex:1" onclick="MGX(this)">থামান</button><button id="mgClose" type="button" class="b" style="flex:1;display:none" onclick="document.getElementById(\'mgBox\').remove()">বন্ধ করুন</button></div></div>';document.body.appendChild(e)}
+function MGlog(t,bad){const l=$('mgLog');if(!l)return;const d=document.createElement('div');d.textContent=t;if(bad)d.style.color='#f87171';l.appendChild(d);while(l.childNodes.length>300)l.removeChild(l.firstChild);l.scrollTop=l.scrollHeight}
+function MGprog(d,t,txt){const b=$('mgBar'),x=$('mgTxt');if(b)b.style.width=(t?Math.round(d/t*100):0)+'%';if(x)x.textContent=txt+(t?' — '+bn(d)+'/'+bn(t):'')}
+function MGend(msg,good){const x=$('mgTxt'),s=$('mgStop'),c=$('mgClose');if(x){x.textContent=msg;x.style.color=good?'#34d399':'#f87171';x.style.whiteSpace='normal'}if(s)s.style.display='none';if(c)c.style.display='block';const b=$('mgBar');if(b&&good)b.style.width='100%'}
+/* ---- ডেটাবেসে নতুন লিংক বসানো (শুধু ছবির ফিল্ড; আর কিছু বদলায় না) ---- */
+async function MGapply(kind,id,map){const k=kind+'|'+id,M=u=>map.has(u)?map.get(u):u,w=MGw.get(k)||{};const T={product:['products',prods],category:['categories',cats],banner:['banners',banners]};
+ if(T[kind]){const o=T[kind][1].find(x=>x.id===id);if(!o)return 0;const p={...o,...w},d={};
+  if(kind==='product'&&Array.isArray(p.images)&&p.images.some(u=>map.has(u)))d.images=p.images.map(M);
+  if(p.image&&map.has(p.image))d.image=M(p.image);
+  if(!Object.keys(d).length)return 0;await updateDoc(doc(db,T[kind][0],id),d);MGw.set(k,{...w,...d});return 1}
+ if(kind==='payment'){const o=P[id];if(!o||typeof o!=='object')return 0;const m={...o,...w};if(!map.has(m.logo))return 0;const nl=M(m.logo);await setDoc(doc(db,'settings','payment'),{[id]:{logo:nl}},{merge:true});MGw.set(k,{logo:nl});return 1}
+ return 0}
+async function MGcommit(ent){const g=new Map();ent.forEach(e=>{const k=e.kind+'|'+e.id;let m=g.get(k);if(!m){m={kind:e.kind,id:e.id,map:new Map()};g.set(k,m)}m.map.set(e.oldUrl,e.newUrl)});let n=0;for(const m of g.values())n+=await MGapply(m.kind,m.id,m.map);return n}
+const MGreadme=()=>'BANA — ছবির ব্যাকআপ (ZIP)\n==========================\nএই ZIP-এ প্রোডাক্ট / ক্যাটাগরি / ব্যানার / পেমেন্ট লোগোর অরিজিনাল HD ছবি আছে (কোনো কমপ্রেশন ছাড়া)।\n\n• images/        — অরিজিনাল ছবি\n• manifest.json  — কোন ছবি কোন প্রোডাক্ট/ক্যাটাগরির এবং ডেটাবেসে কোন লিংকে ছিল\n• database.json  — (শুধু part1) প্রোডাক্ট/ক্যাটাগরি/ব্যানারের ডেটা ব্যাকআপ\n\nকীভাবে রিকভার করবেন (Cloudinary সাসপেন্ড বা সমস্যা হলে):\n1. নতুন Cloudinary অ্যাকাউন্ট খুলে একটি Unsigned upload preset বানান।\n2. অ্যাডমিন → সেটিংস → Cloudinary ইমেজ স্টোরেজে নতুন Cloud name ও preset বসিয়ে সেভ করুন।\n3. "ZIP থেকে রিকভারি" চাপুন এবং সবগুলো পার্ট (part1, part2, …) একসাথে বাছুন।\n\nZIP ফাইলগুলো Google Drive / পিসি / পেনড্রাইভে — অন্তত দুই জায়গায় — রাখুন।\n';
+async function MGone(q,mode,cfg,n){const u=q.url,f=q.refs[0];
+ if(MGcl(u)){const b=await MGget(MGorig(u));return{blob:b,url:u}}
+ let blob=null;try{blob=await MGget(u)}catch(e){blob=null}
+ if(mode!=='migrate'){if(!blob)throw new Error('ডাউনলোড হয়নি (লিংক/CORS)');return{blob,url:/^data:/.test(u)?'':u}}
+ const name='bana/migrated/'+f.kind+'-'+MGsafe(f.id)+'-'+n+'-'+Math.random().toString(36).slice(2,6);let j,ow=0,oh=0;
+ if(blob){try{const bm=await createImageBitmap(blob);ow=bm.width;oh=bm.height;if(bm.close)bm.close()}catch(e){}j=await MGup(blob,cfg,name)}
+ else{j=await MGup(u,cfg,name);blob=await MGget(j.secure_url)}  /* ব্রাউজার ফেচ আটকালে Cloudinary নিজেই লিংক থেকে নেয়, অরিজিনাল ZIP-এর জন্য ফেরত আনা হয় */
+ if(ow&&j.width&&Math.max(j.width,j.height||0)<Math.max(ow,oh)-1)throw new Error('Cloudinary preset ছবি ছোট করছে ('+Math.max(ow,oh)+'→'+Math.max(j.width,j.height||0)+'px) — preset-এর Incoming transformation বন্ধ করুন');
+ return{blob,url:CLU(j.secure_url),w:j.width,h:j.height}}
+async function MGrun(items,mode){MGbusy=true;MGstop=false;MGw.clear();const mig=mode==='migrate',cfg=IBon()?{cloud:String(IB.cloud).trim(),preset:String(IB.preset).trim()}:null;
+ let wl=null;try{wl=await navigator.wakeLock?.request('screen')}catch(e){}
+ const lv=e=>{e.preventDefault();e.returnValue=''};addEventListener('beforeunload',lv);
+ MGbox(mig?'মাইগ্রেশন + ZIP ব্যাকআপ':'ZIP ব্যাকআপ');let ok=0,bad=0,parts=0,seq=0;
+ try{await MGlib();
+  const uq=new Map();items.forEach(it=>{const h=MGhs(it.url);let q=uq.get(h);if(!q){q={url:it.url,refs:[]};uq.set(h,q)}q.refs.push(it)});
+  const list=[...uq.values()],T=list.length,stamp=new Date().toISOString().slice(0,10),at=new Date().toISOString();
+  const dbj=JSON.stringify({exportedAt:at,products:prods,categories:cats,banners:banners,payment:P},(k,v)=>typeof v==='string'&&v.startsWith('data:image/')?'[base64 ছবি — ZIP-এর images/ ফোল্ডারে আছে]':v);
+  let zip=new JSZip(),pB=0,pM=[],pC=[];
+  const flush=async()=>{if(!pM.length)return;parts++;MGprog(ok+bad,T,'ZIP বানানো হচ্ছে (পার্ট '+parts+')');
+   zip.file('manifest.json',JSON.stringify({app:'bana-image-backup',version:1,exportedAt:at,cloud:cfg?cfg.cloud:null,mode,part:parts,items:pM},null,1));if(parts===1)zip.file('database.json',dbj);zip.file('README.txt',MGreadme());
+   const out=await zip.generateAsync({type:'blob',compression:'STORE'});MGdl(out,'bana-images-backup-'+stamp+'-part'+parts+'.zip');MGlog('📦 পার্ট '+parts+' ডাউনলোড হয়েছে — '+pM.length+' ফাইল, '+(out.size/1048576).toFixed(1)+' MB');
+   if(mig&&pC.length){const n=await MGcommit(pC);MGlog('🔗 '+n+'টি ডকুমেন্টে নতুন লিংক বসেছে')}
+   zip=new JSZip();pB=0;pM=[];pC=[]};
+  for(let i=0;i<T&&!MGstop;i+=3){
+   await Promise.all(list.slice(i,i+3).map(async q=>{const n=++seq,f=q.refs[0];
+    try{const r=await MGone(q,mode,cfg,n),path='images/'+f.kind+'/'+MGsafe(f.id)+'_'+String(n).padStart(4,'0')+'.'+MGext(r.blob.type);
+     zip.file(path,r.blob,{compression:'STORE'});pB+=r.blob.size;
+     q.refs.forEach(ref=>{pM.push({kind:ref.kind,docId:ref.id,field:ref.field,label:ref.label,url:r.url,path,mime:r.blob.type,bytes:r.blob.size,w:r.w||null,h:r.h||null,source:/^data:/.test(q.url)?'base64':q.url});if(mig)pC.push({kind:ref.kind,id:ref.id,oldUrl:q.url,newUrl:r.url})});
+     ok++;MGlog('✓ '+f.label+(r.w?' ('+r.w+'×'+r.h+')':''))}
+    catch(e){bad++;MGlog('✗ '+f.label+' — '+e.message,1)}}));
+   MGprog(Math.min(i+3,T),T,mig?'মাইগ্রেট হচ্ছে':'ব্যাকআপ হচ্ছে');
+   if(pB>=MGPART)await flush()}
+  await flush();
+  const msg=(MGstop?'⏸ থামানো হয়েছে — ':'✓ সম্পন্ন — ')+bn(ok)+'টি ছবি'+(mig?' Cloudinary-তে গেছে':' ব্যাকআপে')+(bad?', '+bn(bad)+'টি ব্যর্থ (ডেটা অক্ষত, আবার চালালে বাকিগুলো হবে)':'')+(parts?'। ZIP '+bn(parts)+' পার্ট ডাউনলোড হয়েছে — Google Drive/পিসিতে নিরাপদে রাখুন।':'');
+  MGend(msg,!bad);toast(mig?'মাইগ্রেশন শেষ':'ZIP ব্যাকআপ শেষ',bad?'err':'ok')}
+ catch(e){MGend('থেমে গেছে: '+e.message+(parts?' (আগের '+bn(parts)+' পার্ট ডাউনলোড ও সেভ হয়ে গেছে)':' (কিছুই বদলায়নি)'),0)}
+ finally{removeEventListener('beforeunload',lv);try{wl&&wl.release()}catch(e){}MGbusy=false;MGw.clear()}}
+window.MGO=async()=>{if(MGbusy)return toast('আরেকটি কাজ চলছে','err');if(!IBon())return toast('আগে Cloudinary Cloud name + preset সেভ করে চালু করুন','err');
+ const it=MGscan(false);if(!it.length)return toast('✓ সব ছবি আগে থেকেই Cloudinary-তে আছে');
+ if(!confirm('Firebase/ডেটাবেসের '+bn(it.length)+'টি ছবি অরিজিনাল HD কোয়ালিটিতে Cloudinary ('+String(IB.cloud).trim()+')-তে যাবে।\n\n• প্রতিটি ধাপে আগে ZIP ব্যাকআপ ডাউনলোড হবে, তারপর লিংক বদলাবে\n• ব্যর্থ ছবির ডেটা অক্ষত থাকবে\n• কাজ চলাকালীন পেজ বন্ধ করবেন না\n\nচালাবেন?'))return;
+ await MGrun(it,'migrate')};
+window.MGZ=async()=>{if(MGbusy)return toast('আরেকটি কাজ চলছে','err');const it=MGscan(true);if(!it.length)return toast('ব্যাকআপ করার মতো ছবি নেই','err');
+ if(!confirm(bn(it.length)+'টি ছবির অরিজিনাল ফাইল ZIP আকারে ডাউনলোড হবে (ডেটাবেসে কিছুই বদলাবে না)। চালাবেন?'))return;await MGrun(it,'backup')};
+window.MGR=()=>{if(MGbusy)return toast('আরেকটি কাজ চলছে','err');if(!IBon())return toast('আগে নতুন Cloudinary Cloud name + preset সেভ করে চালু করুন','err');
+ const f=document.createElement('input');f.type='file';f.accept='.zip,application/zip';f.multiple=true;f.onchange=()=>{const a=[...f.files];if(a.length)MGrestore(a)};f.click()};
+async function MGrestore(files){MGbusy=true;MGstop=false;MGw.clear();const cfg={cloud:String(IB.cloud).trim(),preset:String(IB.preset).trim()};
+ let wl=null;try{wl=await navigator.wakeLock?.request('screen')}catch(e){}
+ const lv=e=>{e.preventDefault();e.returnValue=''};addEventListener('beforeunload',lv);MGbox('ZIP থেকে রিকভারি');
+ try{await MGlib();const jobs=new Map();
+  for(let zi=0;zi<files.length;zi++){let z;try{z=await JSZip.loadAsync(files[zi])}catch(e){MGlog('✗ '+files[zi].name+' — ZIP পড়া যায়নি',1);continue}
+   const mf=z.file('manifest.json');if(!mf){MGlog('✗ '+files[zi].name+' — manifest.json নেই',1);continue}
+   let m;try{m=JSON.parse(await mf.async('string'))}catch(e){MGlog('✗ '+files[zi].name+' — manifest নষ্ট',1);continue}
+   if(m.app!=='bana-image-backup'){MGlog('✗ '+files[zi].name+' — এটি BANA ব্যাকআপ নয়',1);continue}
+   (m.items||[]).forEach(it=>{if(!it.url||!it.path||!z.file(it.path))return;const key=zi+'|'+it.path;let j=jobs.get(key);if(!j){j={z,path:it.path,mime:it.mime,refs:[]};jobs.set(key,j)}j.refs.push(it)});
+   MGlog('📦 '+files[zi].name+' — '+bn((m.items||[]).length)+' এন্ট্রি')}
+  const list=[...jobs.values()],T=list.length;if(!T)throw new Error('এই ZIP-এ রিকভার করার মতো ছবি পাওয়া যায়নি');
+  if(!confirm(bn(T)+'টি ছবি নতুন Cloudinary ('+cfg.cloud+')-তে আপলোড হবে এবং প্রোডাক্ট/ক্যাটাগরি/ব্যানারের ছবির লিংক বদলাবে। চালাবেন?')){MGend('বাতিল করা হয়েছে',0);return}
+  const dk=r=>r.kind+'|'+r.docId,rem=new Map(),ent=new Map();list.forEach(j=>j.refs.forEach(r=>rem.set(dk(r),(rem.get(dk(r))||0)+1)));
+  let chain=Promise.resolve(),ok=0,bad=0,docs=0,miss=0,seq=0;
+  const fin=(j,url)=>j.refs.forEach(r=>{const k=dk(r);if(url){if(!ent.has(k))ent.set(k,[]);ent.get(k).push({kind:r.kind,id:r.docId,oldUrl:r.url,newUrl:url})}rem.set(k,rem.get(k)-1);
+   if(rem.get(k)===0&&ent.has(k)){const e=ent.get(k);chain=chain.then(()=>MGcommit(e)).then(n=>{if(n)docs++;else{miss++;MGlog('⚠ '+(r.label||k)+' — ডেটাবেসে আগের লিংক মেলেনি (ডকুমেন্ট বদলেছে/মুছেছে)',1)}}).catch(e=>MGlog('✗ ডেটাবেস আপডেট: '+e.message,1))}});
+  for(let i=0;i<T&&!MGstop;i+=3){
+   await Promise.all(list.slice(i,i+3).map(async j=>{const n=++seq,lb=j.refs[0].label||j.path;
+    try{const raw=await j.z.file(j.path).async('blob'),b=new Blob([raw],{type:j.mime||'image/jpeg'});
+     const r=await MGup(b,cfg,'bana/restored/'+j.refs[0].kind+'-'+MGsafe(j.refs[0].docId)+'-'+n+'-'+Math.random().toString(36).slice(2,6));ok++;MGlog('✓ '+lb);fin(j,CLU(r.secure_url))}
+    catch(e){bad++;MGlog('✗ '+lb+' — '+e.message,1);fin(j,null)}}));
+   MGprog(Math.min(i+3,T),T,'রিকভার হচ্ছে')}
+  await chain;
+  MGend((MGstop?'⏸ থামানো হয়েছে — ':'✓ সম্পন্ন — ')+bn(ok)+'টি ছবি নতুন Cloudinary-তে, '+bn(docs)+'টি ডকুমেন্টের লিংক আপডেট'+(bad?', '+bn(bad)+'টি ব্যর্থ':'')+(miss?', '+bn(miss)+'টি মেলেনি':''),!bad&&!miss);toast('রিকভারি শেষ',bad?'err':'ok')}
+ catch(e){MGend('থেমে গেছে: '+e.message,0)}
+ finally{removeEventListener('beforeunload',lv);try{wl&&wl.release()}catch(e){}MGbusy=false;MGw.clear()}}
+
 function img(f,max=640,q=.72,bg){if(IBon()){max=Math.min(2400,Math.round(max*2.5));q=Math.min(.93,q+.2)}return new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>{const m=new Image();m.onload=()=>{const k=Math.min(1,max/Math.max(m.width,m.height)),c=document.createElement('canvas');c.width=m.width*k;c.height=m.height*k;const cx=c.getContext('2d');if(bg){cx.fillStyle=bg;cx.fillRect(0,0,c.width,c.height)}cx.drawImage(m,0,0,c.width,c.height);IBX(c.toDataURL('image/jpeg',q)).then(ok,no)};m.onerror=no;m.src=r.result};r.readAsDataURL(f)})}
 /* ===== অটো ইমেজ ফিট: ছবি যত বড়ই হোক, ডেটাবেসের ১ MB সীমার মধ্যে আপনা-আপনি ছোট হয়ে সেভ হবে ===== */
 const isDI=u=>typeof u==='string'&&u.startsWith('data:image/');
@@ -652,6 +776,12 @@ function stg0(){return`<div class="c p-4 grid sm:grid-cols-2 gap-3 max-w-2xl"><d
   <button type="button" class="g" onclick="IBT()"><i class="fa-solid fa-plug mr-1"></i>কানেকশন টেস্ট</button>
   <button type="button" class="g" onclick="IBK()"><i class="fa-solid fa-download mr-1"></i>ডেটাবেস ব্যাকআপ (JSON)</button>
   <button type="button" class="g sm:col-span-2" onclick="IBM()"><i class="fa-solid fa-arrows-rotate mr-1"></i>পুরনো ছবি Cloudinary-তে নিন</button>
+  <div class="sm:col-span-2 font-bold mt-2"><i class="fa-solid fa-box-archive text-amber-400 mr-2"></i>Firebase → Cloudinary মাইগ্রেশন + ZIP ব্যাকআপ</div>
+  <div class="sm:col-span-2 text-[11px] text-gray-400 leading-relaxed p-3 rounded-xl bg-black/30">উপরে Cloudinary <b>Cloud name + Unsigned preset</b> সেভ করে চালু রাখুন। এরপর নিচের বাটনে সব ছবি <b>অরিজিনাল HD</b> কোয়ালিটিতে (কোনো রি-কমপ্রেস ছাড়া) Cloudinary-তে যাবে। প্রতিটি ধাপে আগে <b>ZIP ব্যাকআপ</b> ডাউনলোড হয়, তারপর ডেটাবেসের লিংক বদলায়। Cloudinary সাসপেন্ড বা সমস্যা হলে নতুন Cloud name বসিয়ে ZIP থেকে সব ছবি ফেরত আনা যাবে। preset-এ <b>Incoming transformation</b> থাকলে বন্ধ রাখুন (নইলে ছবি ছোট হয়ে যায়)।</div>
+  <div class="sm:col-span-2 text-[11px] font-bold p-3 rounded-xl bg-black/30 text-amber-300"><i class="fa-solid fa-images mr-1"></i>${(()=>{const a=MGscan(false),d=a.filter(x=>/^data:/.test(x.url)).length;return a.length?'মাইগ্রেট বাকি: '+bn(a.length)+' টি (ডেটাবেসে base64: '+bn(d)+', Firebase/অন্য লিংক: '+bn(a.length-d)+') · Cloudinary-তে আছে: '+bn(imgCount().cl)+' টি':'✓ সব ছবি Cloudinary-তে আছে ('+bn(imgCount().cl)+' টি)'})()}</div>
+  <button type="button" class="b sm:col-span-2" onclick="MGO()"><i class="fa-solid fa-cloud-arrow-up mr-2"></i>সব ছবি Cloudinary-তে মাইগ্রেট (HD + ZIP ব্যাকআপ)</button>
+  <button type="button" class="g" onclick="MGZ()"><i class="fa-solid fa-file-zipper mr-1"></i>ZIP ব্যাকআপ নিন</button>
+  <button type="button" class="g" onclick="MGR()"><i class="fa-solid fa-life-ring mr-1"></i>ZIP থেকে রিকভারি</button>
   <button type="button" class="b sm:col-span-2" onclick="SIB()"><i class="fa-solid fa-floppy-disk mr-2"></i>Cloudinary সেটিং সেভ</button>
   <div class="sm:col-span-2 font-bold mt-2"><i class="fa-solid fa-truck-fast text-amber-400 mr-2"></i>Steadfast কুরিয়ার API</div>
  <div><label class="lb">API Key</label><input class="i" id="ck" type="password" value="${esc(C.key||'')}"></div><div><label class="lb">Secret Key</label><input class="i" id="cs2" type="password" value="${esc(C.secret||'')}"></div>
